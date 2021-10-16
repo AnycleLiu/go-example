@@ -10,7 +10,16 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
-const dsn = "hopexdev:Dabaicai123!@tcp(192.168.70.131:3306)/hopex_user_system_test?parseTime=true&loc=Local"
+/*
+create database user;
+create table user.t_user(
+	id int auto_increment primary key,
+	userName varchar(150) not null,
+	createdTime datetime not null default now()
+)engine=innodb charset=utf8mb4;
+*/
+
+const dsn = "root:123456!@tcp(127.0.0.1:3306)/user?parseTime=true&loc=Local"
 
 func main() {
 	log.Println(time.Now().UTC())
