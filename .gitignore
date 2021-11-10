@@ -13,3 +13,8 @@
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
+<<<<<<< HEAD
+=======
+segs
+/source.data
+>>>>>>> 2bf76140dd39183cd9d48b4fcae898234fd74e79

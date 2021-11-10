@@ -1,4 +1,4 @@
-module main
+module go-example
 
 go 1.17
 
@@ -6,7 +6,6 @@ require (
 	github.com/go-redis/redis/v8 v8.11.4
 	github.com/go-sql-driver/mysql v1.6.0
 	github.com/lionsoul2014/ip2region v2.2.0-release+incompatible
-	golang.org/x/net v0.0.0-20210428140749-89ef3d95e781
 )
 
 require (
