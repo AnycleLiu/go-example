@@ -3,17 +3,31 @@ package main
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 )
 
+//SyncMap： 基于读写锁实现的线程安全的map
 type SyncMap struct {
 	rw sync.RWMutex
 	m  map[interface{}]interface{}
+}
+
+//SyncSlice：基于Mutex实现的线程安全的slice
+type SyncSlice struct {
+	m sync.Mutex
+	s []interface{}
 }
 
 func NewSyncMap() *SyncMap {
 	return &SyncMap{
 		rw: sync.RWMutex{},
 		m:  make(map[interface{}]interface{}),
+	}
+}
+func NewSyncSlice() *SyncSlice {
+	return &SyncSlice{
+		m: sync.Mutex{},
+		s: make([]interface{}, 0),
 	}
 }
 
@@ -69,54 +83,92 @@ func (m *SyncMap) Len() int {
 }
 
 func TestSyncMap(m *SyncMap) {
-	const (
-		//10个协程并发put
-		goroutines = 100
-		//每个协程put 100000个
-		numPerGoroutine = 100000
-	)
+	fmt.Println("test sync map")
+	var wg sync.WaitGroup
+	wg.Add(10)
 
-	for i := 0; i < goroutines; i++ {
-		start := numPerGoroutine * i
-		end := start + numPerGoroutine
-
-		for j := start; j < end; j++ {
-			m.Put(j, j)
-		}
+	for i := 0; i < 10; i++ {
+		go func() {
+			defer func() {
+				wg.Done()
+			}()
+			for j := 0; j < 100; j++ {
+				m.Put(j, j)
+			}
+		}()
 	}
-
-	fmt.Printf("预期SyncMap有%d个元素，实际上有%d\n", goroutines*numPerGoroutine, m.Len())
+	wg.Wait()
+	fmt.Println("sync map test done.")
 }
 
 func TestMap(m map[int]int) {
-	defer func() {
-		if err := recover(); err != nil {
-			fmt.Println("出错", err)
-		}
-	}()
-	const (
-		//10个协程并发put
-		goroutines = 100
-		//每个协程put 100000个
-		numPerGoroutine = 100000
-	)
+	fmt.Println("test map")
+	var wg sync.WaitGroup
 
-	for i := 0; i < goroutines; i++ {
-		start := numPerGoroutine * i
-		end := start + numPerGoroutine
-
-		for j := start; j < end; j++ {
-			m[j] = j
-		}
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer func() {
+				wg.Done()
+			}()
+			m[10] = 10
+		}()
 	}
 
-	fmt.Printf("预期Map有%d个元素，实际上有%d\n", goroutines*numPerGoroutine, len(m))
+	wg.Wait()
+	fmt.Println("map test done")
+}
+
+func (s *SyncSlice) Append(items ...interface{}) {
+	s.m.Lock()
+	defer s.m.Unlock()
+
+	s.s = append(s.s, items)
+}
+func (s *SyncSlice) Len() int {
+	s.m.Lock()
+	defer s.m.Unlock()
+	return len(s.s)
+}
+func (s *SyncSlice) Range(i, j int) {
+	s.m.Lock()
+	defer s.m.Unlock()
+	s.s = s.s[i:j]
+}
+func TestSyncSlice(s *SyncSlice) {
+	fmt.Println("test sync slice")
+	var wg sync.WaitGroup
+	var n int32
+
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100000; j++ {
+				s.Append(j)
+				atomic.AddInt32(&n, 1)
+			}
+		}()
+	}
+	wg.Wait()
+
+	fmt.Printf("test append, expect length is %d, actual %d\n", n, s.Len())
+
+	fmt.Println("sync slice test done.")
 }
 
 func main() {
+	//为什么slice和map不是线程安全的
+	//1. map并发写入会引发fatal error: concurrent map writes，导致程序退出无法恢复
+	//2. slice并发append会导致数据被覆盖
+
 	sm := NewSyncMap()
 
 	TestSyncMap(sm)
 
-	TestMap(make(map[int]int))
+	//TestMap(make(map[int]int))
+
+	ss := NewSyncSlice()
+	TestSyncSlice(ss)
+
 }
