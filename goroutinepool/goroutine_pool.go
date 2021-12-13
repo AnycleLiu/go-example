@@ -1,90 +1,10 @@
-package main
+package goroutinepool
 
 import (
 	"fmt"
-	"runtime"
-	"sync"
 	"sync/atomic"
-	"testing"
 	"time"
 )
-
-const (
-	_   = 1 << (10 * iota)
-	KiB // 1024
-	MiB // 1048576
-	// GiB // 1073741824
-	// TiB // 1099511627776             (超过了int32的范围)
-	// PiB // 1125899906842624
-	// EiB // 1152921504606846976
-	// ZiB // 1180591620717411303424    (超过了int64的范围)
-	// YiB // 1208925819614629174706176
-)
-
-func main() {
-	pool := NewGoroutinePoolWithDefault()
-	var n int32
-	var wg sync.WaitGroup
-
-	for i := 0; i < 100000; i++ {
-		wg.Add(1)
-		pool.Put(func() {
-			time.Sleep(time.Microsecond * 1000)
-			atomic.AddInt32(&n, 1)
-			wg.Done()
-		})
-	}
-
-	wg.Wait()
-	fmt.Println(n)
-}
-
-var curMem uint64
-
-const (
-	n     = 100000
-	param = 100
-)
-
-func demoFunc(args interface{}) {
-	n := args.(int)
-	time.Sleep(time.Duration(n) * time.Millisecond)
-}
-
-func TestDetaultPool(t *testing.T) {
-	var wg sync.WaitGroup
-	pool := NewGoroutinePoolWithDefault()
-
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		pool.Put(func() {
-			demoFunc(param)
-			wg.Done()
-		})
-	}
-	wg.Wait()
-	t.Logf("pool, running workers number:%d", pool.Running())
-	mem := runtime.MemStats{}
-	runtime.ReadMemStats(&mem)
-	curMem = mem.TotalAlloc/MiB - curMem
-	t.Logf("memory usage:%d MB", curMem)
-}
-func TestNoPool(t *testing.T) {
-	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func() {
-			demoFunc(param)
-			wg.Done()
-		}()
-	}
-
-	wg.Wait()
-	mem := runtime.MemStats{}
-	runtime.ReadMemStats(&mem)
-	curMem = mem.TotalAlloc/MiB - curMem
-	t.Logf("memory usage:%d MB", curMem)
-}
 
 type Task func()
 
@@ -100,37 +20,32 @@ func (w *Worker) getTask() Task {
 		w.initTask = nil
 		return t
 	}
-	var timeout bool
-
-	for {
-		timed := false
+	return <-w.pool.tasks //拿到任务
+	/*
 		for {
+			timed := false
+
 			workerCount := atomic.LoadInt32(&w.pool.workerCount)
 			//如果worker数量比最小数量要大，timed就为true，需要进行回收worker
-			timed := workerCount > w.pool.min
+			timed = workerCount > w.pool.min
 
-			if workerCount <= w.pool.max && !(timed && timeout) {
-				break
+			if timed {
+				delay := time.NewTimer(w.pool.maxIdle)
+				select {
+				case task := <-w.pool.tasks: //拿到任务
+					if !delay.Stop() {
+						<-delay.C
+					}
+					return task
+				case <-delay.C: //拿不到任务，超时
+					if atomic.CompareAndSwapInt32(&w.pool.workerCount, workerCount, workerCount-1) {
+						return nil
+					}
+				}
+			} else {
+				return <-w.pool.tasks //拿到任务
 			}
-			if atomic.CompareAndSwapInt32(&w.pool.workerCount, workerCount, workerCount-1) {
-				return nil
-			}
-		}
-
-		if timed {
-			select {
-			case task := <-w.pool.tasks: //拿到任务
-				return task
-			case <-time.After(w.pool.maxIdle): //拿不到任务，超时
-				timeout = true
-			}
-		} else {
-			select {
-			case task := <-w.pool.tasks: //拿到任务
-				return task
-			}
-		}
-	}
+		}*/
 }
 
 func (w *Worker) Work() {
@@ -139,7 +54,7 @@ func (w *Worker) Work() {
 	for {
 		task = w.getTask()
 		if task == nil {
-			return
+			break
 		}
 		safeRun(task)
 	}
@@ -182,7 +97,7 @@ type GoroutinePool struct {
 }
 
 func NewGoroutinePoolWithDefault() *GoroutinePool {
-	return NewGoroutinePool(int32(runtime.NumCPU())*2, 64, time.Second*60, 1000)
+	return NewGoroutinePool(100, 10000, time.Second*60, 1024)
 }
 
 func NewGoroutinePool(minWorkerCount, maxWorkerCount int32, maxIdle time.Duration, maxTaskCount int) *GoroutinePool {
@@ -238,7 +153,8 @@ retry:
 					return
 				} else {
 					if atomic.CompareAndSwapInt32(&p.workerCount, workerCount, workerCount+1) {
-						p.addWorker(t)
+						p.addWorker(nil)
+						p.tasks <- t
 						return
 					} else {
 						continue retry //状态改变，更新失败，重试
